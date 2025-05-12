@@ -5,3 +5,4 @@ xarray>=2022.3.0
 matplotlib>=3.5.0  # For visualization
 scipy>=1.7.0  # For optimization 
 streamlit
+highspy

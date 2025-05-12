@@ -9,7 +9,17 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
 from applications.solar_clipping import SolarClippingApplication
-
+st.markdown(
+    """
+    <style>
+    /* Change background color of the sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #cccccf; /* change this to any hex or RGB color */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 def main(
     battery_capacity, solar_capacity, inverter_capacity, max_export,
     discount_rate, peak_price, offpeak_price, latitude, longitude,
