@@ -47,6 +47,12 @@ class GridModel:
             name='power_balance'
         )
 
+        # Maximum export constraint
+        model.add_constraints(
+            variables['export'] <= self.params.max_export,
+            name='max_export_limit'
+        )
+
     def calculate_grid_costs(self, discount_rate: float) -> float:
         """Calculate grid costs including connection cost and annuity factor"""
         annuity_factor = (discount_rate * 

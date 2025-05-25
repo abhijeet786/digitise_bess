@@ -24,6 +24,7 @@ class SolarParameters:
     end_date: str = None  # format: 'YYYY-MM-DD'
     capex_per_mw: float = 1000000  # $/MW
     lifetime_years: int = 25  # years
+    data_source: str = 'renewables_ninja'  # 'renewables_ninja' or 'csv'
 
     def __post_init__(self):
         """Set default values after initialization"""
@@ -35,7 +36,7 @@ class SolarModel:
     def __init__(self, params: SolarParameters):
         self.params = params
         self.ninja_api = None
-        if params.api_token:
+        if params.api_token and params.data_source == 'renewables_ninja':
             self.ninja_api = RenewablesNinjaAPI(params.api_token)
         
         # Set default dates if not provided
@@ -47,8 +48,31 @@ class SolarModel:
         self.generation_profile = self._get_generation_profile()
 
     def _get_generation_profile(self) -> pd.Series:
-        """Get solar generation profile from Renewables.ninja API or use default profile"""
-        if self.ninja_api:
+        """Get solar generation profile from Renewables.ninja API, CSV file, or use default profile"""
+        if self.params.data_source == 'csv':
+            try:
+                # Read capacity factors from CSV
+                df = pd.read_csv('Data/solar_capacity_factors_pvlib.csv',index_col=0)
+                capacity_factors = df['ABREL_Green_Energy_Limited_Chhattisgarh_93']  # Get first column
+                print("sodium",capacity_factors)
+                
+                # Create time index for the year
+                hours_per_year = 8760
+                time_index = pd.date_range(self.start_date, periods=hours_per_year, freq='h')
+                
+                # Create profile by multiplying capacity factors with capacity
+                profile = pd.Series(
+                    capacity_factors.values * self.params.capacity,
+                    index=time_index
+                )
+                profile.to_csv("profile.csv")
+                return profile
+                
+            except Exception as e:
+                print(f"Warning: Failed to read solar data from CSV: {str(e)}")
+                print("Using default generation profile instead")
+        
+        elif self.ninja_api:
             try:
                 return self.ninja_api.fetch_pv_data(
                     lat=self.params.latitude,

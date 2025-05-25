@@ -7,8 +7,8 @@ from battery_components.battery import BatteryParameters, BatteryModel
 from battery_components.solar import SolarParameters, SolarModel
 from battery_components.grid import GridParameters, GridModel
 
-class PeakShavingApplication:
-    """Peak shaving application using battery storage"""
+class GridExportTargetApplication:
+    """Grid export target application using battery storage and solar"""
     def __init__(
         self,
         # Battery parameters
@@ -26,15 +26,17 @@ class PeakShavingApplication:
         solar_capex_per_mw: float = 1000000,
         solar_lifetime_years: int = 20,
         solar_inverter_capacity: float = 5.0,
+        data_source: str = 'renewables_ninja',  # 'renewables_ninja' or 'csv'
         
         # Grid parameters
         max_export: float = 10.0,  # MW
         grid_connection_cost: float = 50000,  # $/MW
+        export_target: float = None,  # MW, required target export level
         
         # Economic parameters
         discount_rate: float = 0.08,
-        peak_price: float = 100.0,  # $/MWh (higher price during non-solar hours)
-        offpeak_price: float = 20.0,  # $/MWh (lower price during solar hours)
+        peak_price: float = 100.0,  # $/MWh
+        offpeak_price: float = 20.0,  # $/MWh
         
         # Location parameters
         latitude: float = 28.6139,  # Default to New Delhi coordinates
@@ -45,6 +47,9 @@ class PeakShavingApplication:
         start_date: str = None,  # format: 'YYYY-MM-DD'
         end_date: str = None    # format: 'YYYY-MM-DD'
     ):
+        if export_target is None:
+            raise ValueError("export_target is required for GridExportTargetApplication")
+        
         # Create battery parameters
         self.battery_params = BatteryParameters(
             capacity=battery_capacity,
@@ -67,7 +72,8 @@ class PeakShavingApplication:
             lifetime_years=solar_lifetime_years,
             inverter_capacity=solar_inverter_capacity,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            data_source=data_source  # Pass the data source parameter
         )
 
         # Create solar model to get generation profile
@@ -75,7 +81,6 @@ class PeakShavingApplication:
         generation_profile = self.solar_model.generation_profile
 
         # Create price profile based on solar generation
-        # Higher price when solar generation is low, lower price when solar generation is high
         price_profile = pd.Series(
             np.where(generation_profile > generation_profile.mean(),
                     offpeak_price,  # Lower price during solar hours
@@ -90,6 +95,9 @@ class PeakShavingApplication:
             price_profile=price_profile,
             connection_cost=grid_connection_cost
         )
+        
+        # Store export target
+        self.export_target = export_target
 
         # Create component models
         self.battery_model = BatteryModel(self.battery_params)
@@ -129,6 +137,12 @@ class PeakShavingApplication:
             solar_vars['generation'],
             battery_vars['charge'],
             battery_vars['discharge']
+        )
+        
+        # Add export target constraint
+        model.add_constraints(
+            grid_vars['export'] >= self.export_target,
+            name='export_target'
         )
 
         # Set objective
@@ -188,6 +202,9 @@ class PeakShavingApplication:
         grid_export = grid_vars['export'].solution.values
         grid_revenue = float(np.sum(grid_export * self.grid_params.price_profile.values))
         
+        # Calculate export target compliance
+        export_compliance = np.mean(grid_export >= self.export_target) * 100
+        
         return {
             'battery': {
                 'capacity': battery_capacity,
@@ -205,7 +222,9 @@ class PeakShavingApplication:
                 'max_export': self.grid_params.max_export,
                 'connection_cost': self.grid_params.connection_cost,
                 'export': grid_export,
-                'revenue': grid_revenue
+                'revenue': grid_revenue,
+                'export_target': self.export_target,
+                'export_compliance': export_compliance
             },
             'total_cost': battery_cost + solar_cost,
             'revenue': grid_revenue,
@@ -225,7 +244,9 @@ class PeakShavingApplication:
             },
             'grid': {
                 'max_export': results['grid']['max_export'],
-                'connection_cost': results['grid']['connection_cost']
+                'connection_cost': results['grid']['connection_cost'],
+                'export_target': results['grid']['export_target'],
+                'export_compliance': results['grid']['export_compliance']
             },
             'total_cost': results['total_cost'],
             'revenue': results['revenue'],

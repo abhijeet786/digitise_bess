@@ -15,6 +15,7 @@ class BatteryParameters:
     capex_per_mwh: float = 150  # $/MWh
     lifetime_years: int = 10
     has_dedicated_inverter: bool = True
+    cycles_life: int = 4_000  # Number of cycles before end of life
 
 class BatteryModel:
     """Battery optimization model with constraints"""
@@ -41,8 +42,9 @@ class BatteryModel:
                 coords={"time": time},
                 dims=["time"],
                 lower=0
-            )
+            ),
         }
+        
         
         # Add capacity variable with bounds
         if self.params.capacity is not None:
@@ -70,7 +72,9 @@ class BatteryModel:
         """Add battery-specific constraints to the model"""
         # Initial SOC balance
         t0 = time[0]
-        expr0 = variables['soc'].at[t0] - variables['charge'].at[t0] * self.params.charge_efficiency + \
+        t_prev = time[-1]  # Last timestep of previous period
+        expr0 = variables['soc'].at[t0] - variables['soc'].at[t_prev] * (1 - self.params.standing_loss) - \
+                variables['charge'].at[t0] * self.params.charge_efficiency + \
                 variables['discharge'].at[t0] / self.params.discharge_efficiency
         model.add_constraints(expr0 == 0, name="soc_balance_0")
 
@@ -104,14 +108,49 @@ class BatteryModel:
             variables['soc'] <= capacity,
             name="soc_limit"
         )
+        # add a cumulative variable
+        cum_dis = model.add_variables(
+            name="battery_cum_dis",
+            coords={"time": time},
+            dims=["time"],
+            lower=0
+        )
+        
+
+        # ── cumulative-discharge initial step ──────────────────────
+        model.add_constraints(
+            cum_dis.at[time[0]] - variables["discharge"].at[time[0]] == 0,
+            name="cum_dis_init",
+        )
+        
+        # ── cumulative-discharge evolution for t > 0 ──────────────
+        model.add_constraints(
+            cum_dis.sel(time=time[1:])
+            - cum_dis.shift(time=1).sel(time=time[1:])      # previous timestep
+            - variables["discharge"].sel(time=time[1:])     # add current discharge
+            == 0,
+            name="cum_dis_evolution",
+        )
+
+        # Calculate annual cycles limit by dividing total cycles by lifetime years
+        annual_cycles_limit = self.params.cycles_life / self.params.lifetime_years
+        model.add_constraints(
+            cum_dis <= annual_cycles_limit * variables["capacity"],
+            name="lifetime_throughput_cap",
+        )
+
+
 
     def calculate_battery_costs(self, variables: Dict[str, xr.DataArray], discount_rate: float) -> float:
         """Calculate battery costs including CAPEX and annuity factor"""
-        annuity_factor = (discount_rate * 
-                         (1 + discount_rate) ** self.params.lifetime_years) / \
-                        ((1 + discount_rate) ** self.params.lifetime_years - 1)
+        annuity_factor = 1
         
         # Get capacity value (fixed or variable)
         capacity = variables.get('capacity', self.params.capacity)
         
         return self.params.capex_per_mwh * capacity * annuity_factor 
+
+    def calculate_degradation_cost(self, discharge_sum: xr.DataArray) -> float:
+        """Calculate battery degradation cost based on total discharge"""
+        deg_cost_per_mwh = self.params.capex_per_mwh / self.params.cycles_life  # $/MWh
+        return deg_cost_per_mwh * discharge_sum 
