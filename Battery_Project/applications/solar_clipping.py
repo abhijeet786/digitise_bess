@@ -146,7 +146,8 @@ class SolarClippingApplication:
         self._set_objective(model, battery_vars, solar_vars, grid_vars)
 
         # Solve the model
-        model.solve()
+    
+        model.solve(solver="highs")
         
         # Extract and return results
         results = self._extract_results(model, battery_vars, solar_vars, grid_vars)
